@@ -13,6 +13,8 @@ from typing import Any, Optional
 
 from sqlalchemy import func, select
 
+from sqlalchemy.orm import joinedload
+
 from .models import Child, ErrorType, Mistake, Session, Subject, TopicMastery
 
 logger = logging.getLogger("ai_tutor.db.repository")
@@ -176,6 +178,133 @@ class MemoryRepository:
     # ---------------------------------------------------------------- #
     # Session summary
     # ---------------------------------------------------------------- #
+
+    # ---------------------------------------------------------------- #
+    # Sessions
+    # ---------------------------------------------------------------- #
+
+    async def get_sessions(
+        self,
+        child_id: str,
+        subject_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """
+        List recent sessions for a child, optionally filtered by subject.
+
+        Returns list of dicts with id, subject_id, subject_name, started_at,
+        ended_at, duration_minutes, topics_covered.
+        """
+        stmt = (
+            select(Session)
+            .options(joinedload(Session.subject))
+            .where(Session.child_id == child_id, Session.ended_at.isnot(None))
+            .order_by(Session.started_at.desc())
+            .limit(limit)
+        )
+        if subject_id is not None:
+            stmt = stmt.where(Session.subject_id == subject_id)
+
+        result = await self.session.execute(stmt)
+        sessions = result.unique().scalars().all()
+
+        rows = []
+        for s in sessions:
+            duration = None
+            if s.ended_at and s.started_at:
+                delta = s.ended_at - s.started_at
+                duration = round(delta.total_seconds() / 60, 1)
+
+            rows.append({
+                "id": s.id,
+                "subject_id": s.subject_id,
+                "subject_name": s.subject.name if s.subject else s.subject_id,
+                "started_at": s.started_at.isoformat() if s.started_at else None,
+                "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+                "duration_minutes": duration,
+                "topics_covered": s.topics_covered or [],
+            })
+        return rows
+
+    # ---------------------------------------------------------------- #
+    # Topic mastery
+    # ---------------------------------------------------------------- #
+
+    async def get_mastery(
+        self,
+        child_id: str,
+        subject_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Get all topic mastery scores for a child.
+
+        Returns list of dicts with topic, subject_id, score, attempts,
+        last_tested_at.
+        """
+        stmt = (
+            select(TopicMastery)
+            .where(TopicMastery.child_id == child_id)
+            .order_by(TopicMastery.topic.asc())
+        )
+        if subject_id is not None:
+            stmt = stmt.where(TopicMastery.subject_id == subject_id)
+
+        result = await self.session.execute(stmt)
+        rows = result.scalars().all()
+
+        return [
+            {
+                "topic": r.topic,
+                "subject_id": r.subject_id,
+                "score": r.score,
+                "attempts": r.attempts,
+                "last_tested_at": (
+                    r.last_tested_at.isoformat() if r.last_tested_at else None
+                ),
+            }
+            for r in rows
+        ]
+
+    # ---------------------------------------------------------------- #
+    # Mistakes
+    # ---------------------------------------------------------------- #
+
+    async def get_mistakes(
+        self,
+        child_id: str,
+        subject_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """
+        List recent mistakes for a child, optionally filtered by subject.
+
+        Returns list of dicts with id, session_id, subject_id, topic,
+        error_type, description, timestamp.
+        """
+        stmt = (
+            select(Mistake)
+            .where(Mistake.child_id == child_id)
+            .order_by(Mistake.timestamp.desc())
+            .limit(limit)
+        )
+        if subject_id is not None:
+            stmt = stmt.where(Mistake.subject_id == subject_id)
+
+        result = await self.session.execute(stmt)
+        rows = result.scalars().all()
+
+        return [
+            {
+                "id": r.id,
+                "session_id": r.session_id,
+                "subject_id": r.subject_id,
+                "topic": r.topic,
+                "error_type": r.error_type.value,
+                "description": r.description,
+                "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            }
+            for r in rows
+        ]
 
     async def get_session_summary(self, session_id: str) -> dict[str, Any]:
         """

@@ -1,8 +1,11 @@
 """
-FastAPI application — WebSocket entry point for the AI tutor.
+FastAPI application — WebSocket entry point + REST API for the AI tutor.
 
-Single endpoint:
+Endpoints:
     ws://localhost:8000/ws/{child_id}
+    GET /api/children/{child_id}/sessions
+    GET /api/children/{child_id}/mastery?subject=math
+    GET /api/children/{child_id}/mistakes?subject=math
 
 On startup the database is initialised (pgvector → Alembic migrations → seeds).
 """
@@ -11,10 +14,12 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Optional
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Query, WebSocket
 
 from .db.database import async_session_factory, init_db
+from .db.repository import MemoryRepository
 from .db.seed import seed_subjects
 from .websocket_manager import WebSocketSessionManager
 
@@ -46,6 +51,57 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Per-request DB session helper
+async def _repo():
+    sess = async_session_factory()
+    try:
+        yield MemoryRepository(sess)
+    finally:
+        await sess.close()
+
+
+# --------------------------------------------------------------------------- #
+# REST API — Parent Dashboard
+# --------------------------------------------------------------------------- #
+
+
+from fastapi import Depends, HTTPException
+
+
+@app.get("/api/children/{child_id}/sessions")
+async def get_sessions(
+    child_id: str,
+    subject: Optional[str] = Query(None),
+    limit: int = Query(50),
+    repo: MemoryRepository = Depends(_repo),
+):
+    """List recent tutoring sessions for a child."""
+    rows = await repo.get_sessions(child_id, subject_id=subject, limit=limit)
+    return {"sessions": rows}
+
+
+@app.get("/api/children/{child_id}/mastery")
+async def get_mastery(
+    child_id: str,
+    subject: Optional[str] = Query(None),
+    repo: MemoryRepository = Depends(_repo),
+):
+    """Topic mastery scores, filterable by subject."""
+    rows = await repo.get_mastery(child_id, subject_id=subject)
+    return {"mastery": rows}
+
+
+@app.get("/api/children/{child_id}/mistakes")
+async def get_mistakes(
+    child_id: str,
+    subject: Optional[str] = Query(None),
+    limit: int = Query(50),
+    repo: MemoryRepository = Depends(_repo),
+):
+    """Recent mistake patterns, filterable by subject."""
+    rows = await repo.get_mistakes(child_id, subject_id=subject, limit=limit)
+    return {"mistakes": rows}
 
 
 # --------------------------------------------------------------------------- #
