@@ -21,6 +21,8 @@ dependencies = [
     "numpy>=1.26.0",
     "torch>=2.2.0",
     "kokoro>=0.7.0",
+    "alembic>=1.13.0",
+    "greenlet>=3.5.3",
 ]
 
 [project.optional-dependencies]
