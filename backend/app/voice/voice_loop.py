@@ -50,7 +50,7 @@ from typing import Awaitable, Callable, Optional, Union
 
 import numpy as np
 
-from .stt import VoiceInputManager
+from .stt import VADConfig, VoiceInputManager
 from .tts import VoiceOutputManager
 
 logger = logging.getLogger("ai_tutor.voice.loop")
@@ -60,6 +60,7 @@ OnUserSpeech = Callable[[str], Union[None, Awaitable[None]]]
 
 @dataclass
 class VoiceLoopConfig:
+    # ── Barge-in settings ───────────────────────────────────────────
     # Probability threshold for the barge-in watcher to consider a frame
     # "speech" while the tutor is talking. Kept on the higher side relative
     # to normal VAD to reduce false positives from the tutor's own audio
@@ -71,6 +72,15 @@ class VoiceLoopConfig:
     # single frame is too noise-prone; a short run of frames confirms
     # genuine sustained speech rather than a click/pop.
     barge_in_consecutive_frames: int = 3
+
+    # ── VAD (speech boundary detection) settings ────────────────────
+    # Controls how long of a silence gap is needed before the utterance
+    # is considered finished. Raise for longer thinking pauses, lower for
+    # snappier responses.
+    end_of_speech_silence_ms: int = 1500
+
+    def _to_vad_config(self) -> VADConfig:
+        return VADConfig(end_of_speech_silence_ms=self.end_of_speech_silence_ms)
 
 
 class _BargeInWatcher:
@@ -125,7 +135,9 @@ class VoiceLoop:
         config: Optional[VoiceLoopConfig] = None,
     ) -> None:
         self.on_user_speech = on_user_speech
-        self.voice_input = voice_input or VoiceInputManager()
+        self.voice_input = voice_input or VoiceInputManager(
+            vad_config=self.config._to_vad_config()
+        )
         self.voice_output = voice_output or VoiceOutputManager()
         self.config = config or VoiceLoopConfig()
 

@@ -45,10 +45,11 @@ class VADConfig:
     speech_threshold: float = 0.5
 
     # How many consecutive ms of silence after speech before we consider
-    # the utterance finished. This is the main latency/robustness tradeoff:
-    # too short -> cuts off children who pause mid-sentence; too long ->
-    # blows the 1.5s latency target.
-    end_of_speech_silence_ms: int = 600
+    # the utterance finished. Children naturally pause 1-2 seconds to
+    # think mid-sentence; setting this too short causes the tutor to
+    # barge in with a partial utterance. 1500ms gives enough room for
+    # thinking pauses without feeling sluggish on actual end-of-speech.
+    end_of_speech_silence_ms: int = 1500
 
     # Minimum utterance duration to bother transcribing. Filters out coughs,
     # taps, "um" stubs, and other sub-0.5s noise blips.
