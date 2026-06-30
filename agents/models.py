@@ -78,3 +78,4 @@ class TutorResponse(BaseModel):
     whiteboard_commands: list[DrawCommand] | None = None
     emotion_signal: Literal["encouraging", "neutral", "redirecting"]
     topic_detected: str | None = None
+    subject_detected: str | None = None

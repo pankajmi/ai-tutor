@@ -66,6 +66,7 @@ class WebSocketSessionManager:
         self.orchestrator = Orchestrator()
         self.session: Optional[SessionState] = None
         self.db_session_id: Optional[str] = None
+        self.subjects_visited: list[str] = []
 
         # Voice pipeline (lazy)
         self._voice_loop: Optional[VoiceLoop] = None
@@ -268,8 +269,12 @@ class WebSocketSessionManager:
     # ---------------------------------------------------------------- #
 
     async def _handle_session_start(self, data: dict[str, Any]) -> None:
-        subject = data.get("subject", "Math")
-        topic = data.get("topic", "")
+        subject = data.get("subject") or ""
+        topic = data.get("topic") or ""
+        # If no subject provided, start with a general greeting and let
+        # the subject_detector figure it out from the child's first turn.
+        if not subject:
+            subject = "General"
         self.session = SessionState(
             child_id=self.child_id,
             subject=subject,
@@ -279,15 +284,18 @@ class WebSocketSessionManager:
             last_tutor_response=None,
             pending_whiteboard_commands=[],
         )
+        self.subjects_visited = [subject] if subject != "General" else []
         logger.info("Session started: child=%s subject=%s topic=%s", self.child_id, subject, topic)
-        await self.ws.send_json({
-            "type": "tutor_speech",
-            "text": (
-                f"Hi there! I'm Nova, your tutor. "
-                f"Let's explore {topic or subject} together. "
-                f"What would you like to learn about?"
-            ),
-        })
+        greeting = (
+            f"Hi there! I'm Nova, your tutor. "
+            f"Let's explore {topic or subject} together. "
+            f"What would you like to learn about?"
+        ) if subject != "General" else (
+            "Hi there! I'm Nova, your tutor. "
+            "What subject would you like to explore today? "
+            "I can help with Math, Science, English, or Social Studies."
+        )
+        await self.ws.send_json({"type": "tutor_speech", "text": greeting})
         await self.ws.send_json({"type": "emotion", "signal": "encouraging"})
 
     async def _handle_speech(self, data: dict[str, Any]) -> None:
@@ -298,7 +306,7 @@ class WebSocketSessionManager:
         if self.session is None:
             self.session = SessionState(
                 child_id=self.child_id,
-                subject="Math",
+                subject="General",
                 current_topic="",
                 conversation_history=[],
                 current_mode="teaching",
@@ -319,6 +327,11 @@ class WebSocketSessionManager:
                 "message": "I'm having trouble thinking right now. Please try again.",
             })
             return
+
+        # Track subjects visited for DB persistence
+        current_subject = self.session.get("subject", "")
+        if current_subject and current_subject not in self.subjects_visited:
+            self.subjects_visited.append(current_subject)
 
         response = self.session.get("last_tutor_response")
         if response is None:
@@ -393,7 +406,12 @@ class WebSocketSessionManager:
                 if child is None:
                     db_sess.add(Child(id=self.child_id, name=f"Child_{self.child_id[:8]}", grade=5))
                     await db_sess.commit()
-                subject_id = self.session["subject"].lower().replace(" ", "_")
+                # Primary subject FK = first subject visited, or "general"
+                subject_id = (
+                    self.subjects_visited[0].lower().replace(" ", "_")
+                    if self.subjects_visited
+                    else "general"
+                )
                 topics = self.session.get("current_topic", "")
                 topics_list = [topics] if topics else []
                 db_session = DbSession(
@@ -402,6 +420,7 @@ class WebSocketSessionManager:
                     subject_id=subject_id,
                     ended_at=datetime.now(timezone.utc),
                     topics_covered=topics_list,
+                    subjects_covered=list(self.subjects_visited),
                 )
                 db_session = await db_sess.merge(db_session)
                 await db_sess.commit()

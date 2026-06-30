@@ -85,6 +85,7 @@ class TutorResponse(BaseModel):
     whiteboard_commands: list[DrawCommand] | None
     emotion_signal: Literal["encouraging", "neutral", "redirecting"]
     topic_detected: str | None
+    subject_detected: str | None              # set when child switches subject
 
 class DrawCommand(BaseModel):
     type: Literal["write", "highlight", "arrow", "circle", "clear", "box"]
@@ -95,7 +96,7 @@ class DrawCommand(BaseModel):
 ```python
 class SessionState(TypedDict):
     child_id: str
-    subject: str
+    subject: str                          # mutable — updated per-turn by subject_detector
     current_topic: str
     conversation_history: list[Message]
     current_mode: Literal["teaching", "practice", "homework"]
@@ -116,6 +117,12 @@ class SessionState(TypedDict):
   discussion for language/social studies) — but this adaptation happens
   in the Tutor Agent's prompt construction only, never in shared
   infrastructure (LLM client, memory layer, WebSocket plumbing)
+- Subject is fluid — the child can switch subjects mid-session without
+  a new `session_start`. The Tutor Agent detects implied subject changes
+  via `subject_detected` in `TutorResponse`. A keyword-based fallback
+  map in `orchestrator.py:_SUBJECT_TOPIC_KEYWORDS` covers missed detections.
+  The orchestrator's `subject_detector` node (between agent nodes and
+  `response_assembler`) runs every turn and updates `SessionState.subject`.
 
 ## WebSocket Protocol
 
@@ -123,7 +130,8 @@ Endpoint: `ws://localhost:8000/ws/{child_id}`
 
 ```
 Client → Server
-{ "type": "session_start", "child_id": "...", "subject": "...", "topic": "..." }
+{ "type": "session_start", "child_id": "...", "subject?": "...", "topic?": "..." }
+  -- subject/topic optional; defaults to "General" (auto-detected from first turn)
 { "type": "speech", "text": "..." }
 { "type": "session_end" }
 
@@ -131,6 +139,8 @@ Server → Client
 { "type": "tutor_speech", "text": "..." }
 { "type": "whiteboard", "commands": [...] }
 { "type": "emotion", "signal": "..." }
+{ "type": "transcription", "text": "..." }
+  -- echo of the child's STT transcription, so chat log shows "you said"
 { "type": "error", "message": "..." }
 ```
 
@@ -143,7 +153,7 @@ do not block one on the other. They sync client-side via `delay_ms`.
 Child(id, name, grade, created_at)
 Subject(id, name)
     -- seed with CBSE subjects: Math, Science, English, Social Studies, etc.
-Session(id, child_id, subject_id, started_at, ended_at, topics_covered: JSON)
+Session(id, child_id, subject_id, started_at, ended_at, topics_covered: JSON, subjects_covered: JSON)
 Mistake(id, child_id, session_id, subject_id, topic, error_type, description, timestamp)
     error_type: enum["conceptual", "procedural", "careless"]
     -- "procedural" generalizes "calculation" beyond math (e.g. a grammar

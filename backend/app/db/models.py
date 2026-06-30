@@ -77,6 +77,7 @@ class Session(Base):
     )
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     topics_covered: Mapped[Optional[list[Any]]] = mapped_column(JSON)
+    subjects_covered: Mapped[Optional[list[str]]] = mapped_column(JSON)
 
     child: Mapped["Child"] = relationship(back_populates="sessions")
     subject: Mapped["Subject"] = relationship(back_populates="sessions")

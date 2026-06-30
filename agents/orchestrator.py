@@ -138,6 +138,118 @@ def router(state: OrchestratorState) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Subject detection (fluid switching support)
+# --------------------------------------------------------------------------- #
+
+_SUBJECT_TOPIC_KEYWORDS: dict[str, list[str]] = {
+    "Math": [
+        "fraction", "decimal", "algebra", "geometry", "addition", "subtract",
+        "multiply", "division", "number", "graph", "equation", "angle",
+        "triangle", "square", "circle", "percentage", "ratio", "probability",
+        "calculate", "solve", "sum", "difference", "product", "quotient",
+        "prime", "factor", "multiple", "arithmetic", "plus", "minus", "times",
+        "divided", "equal", "value", "digit", "place value", "table",
+    ],
+    "Science": [
+        "photosynthesis", "cell", "force", "energy", "motion", "gravity",
+        "electricity", "magnet", "chemical", "reaction", "element", "compound",
+        "atom", "molecule", "ecosystem", "habitat", "food chain", "solar",
+        "planet", "earth", "water cycle", "evaporation", "condensation",
+        "precipitation", "friction", "speed", "velocity", "acceleration",
+        "light", "sound", "heat", "temperature", "circuit", "voltage",
+        "experiment", "observation", "hypothesis", "variable", "plant",
+        "animal", "human body", "skeleton", "digestive", "respiratory",
+        "nerve", "muscle", "germ", "microbe", "flower", "seed", "pollination",
+    ],
+    "English": [
+        "noun", "verb", "adjective", "adverb", "pronoun", "preposition",
+        "conjunction", "sentence", "grammar", "spelling", "vocabulary",
+        "paragraph", "essay", "story", "poem", "rhyme", "author", "character",
+        "plot", "setting", "theme", "metaphor", "simile", "comprehension",
+        "reading", "writing", "tense", "plural", "singular", "synonym",
+        "antonym", "prefix", "suffix", "punctuation", "letter", "word meaning",
+        "noun phrase", "verb phrase", "clause",
+    ],
+    "Social Studies": [
+        "history", "geography", "map", "country", "capital", "state",
+        "river", "mountain", "ocean", "continent", "culture", "tradition",
+        "festival", "government", "democracy", "republic", "parliament",
+        "constitution", "citizen", "rights", "duties", "agriculture",
+        "industry", "transport", "communication", "monument", "dynasty",
+        "empire", "kingdom", "revolution", "independence", "freedom",
+        "civilization", "ancient", "medieval", "modern", "society",
+        "community", "resource", "climate", "population", "settlement",
+        "trade", "exploration", "invention", "discovery",
+    ],
+}
+
+
+def _detect_subject(
+    current_subject: str,
+    child_message: str,
+    current_topic: str,
+    tutor_response: Optional[TutorResponse],
+) -> str:
+    """
+    Detect if the child switched subjects this turn.
+
+    Priority order:
+      1. LLM explicitly set subject_detected in TutorResponse
+      2. topic_detected matches keywords from a different subject's map
+      3. current message matches keywords from a different subject's map
+
+    Returns the detected subject (or current_subject if no switch detected).
+    """
+    # 1. LLM override
+    if (
+        tutor_response is not None
+        and tutor_response.subject_detected
+        and tutor_response.subject_detected.lower() != current_subject.lower()
+    ):
+        detected = tutor_response.subject_detected.strip().title()
+        logger.info(
+            "Subject switch detected by LLM: %s -> %s",
+            current_subject, detected,
+        )
+        return detected
+
+    # Build a combined text to check for keywords
+    check_text = (child_message + " " + (current_topic or "")).lower()
+
+    # 2/3. Keyword fallback — find the best matching subject
+    best_subject = current_subject
+    best_score = 0
+
+    for subject, keywords in _SUBJECT_TOPIC_KEYWORDS.items():
+        if subject.lower() == current_subject.lower():
+            continue  # only check for switches to a different subject
+        score = sum(1 for kw in keywords if kw in check_text)
+        if score > best_score:
+            best_score = score
+            best_subject = subject
+
+    if best_score >= 2 and best_subject.lower() != current_subject.lower():
+        logger.info(
+            "Subject switch detected by keywords (%d hits): %s -> %s",
+            best_score, current_subject, best_subject,
+        )
+        return best_subject
+
+    return current_subject
+
+
+async def subject_detector(state: OrchestratorState) -> dict:
+    """Detect subject switches and update SessionState.subject."""
+    new_subject = _detect_subject(
+        current_subject=state["subject"],
+        child_message=state["child_message"],
+        current_topic=state["current_topic"],
+        tutor_response=state.get("current_tutor_response"),
+    )
+    return {"subject": new_subject}
+
+
+# --------------------------------------------------------------------------- #
 # Nodes
 # --------------------------------------------------------------------------- #
 
@@ -244,6 +356,7 @@ def _build_graph():
     builder.add_node("intent_classifier", intent_classifier)
     builder.add_node("tutor_node", tutor_node)
     builder.add_node("problem_gen_node", problem_gen_node)
+    builder.add_node("subject_detector", subject_detector)
     builder.add_node("response_assembler", response_assembler)
     builder.add_node("mistake_logger_node", mistake_logger_node)
 
@@ -256,8 +369,9 @@ def _build_graph():
             "problem_gen_node": "problem_gen_node",
         },
     )
-    builder.add_edge("tutor_node", "response_assembler")
-    builder.add_edge("problem_gen_node", "response_assembler")
+    builder.add_edge("tutor_node", "subject_detector")
+    builder.add_edge("problem_gen_node", "subject_detector")
+    builder.add_edge("subject_detector", "response_assembler")
     builder.add_edge("response_assembler", "mistake_logger_node")
     builder.add_edge("mistake_logger_node", END)
 
