@@ -1,0 +1,45 @@
+[
+  {
+    "spoken_text": "That is a great question! Plants make their own food through a process called photosynthesis. Can you think of what ingredients a plant might need to make its food?",
+    "whiteboard_commands": [
+      {"type": "write", "content": "Photosynthesis", "x": 80, "y": 80, "font_size": 36, "delay_ms": 0},
+      {"type": "write", "content": "Ingredients needed:", "x": 80, "y": 140, "font_size": 24, "delay_ms": 500},
+      {"type": "write", "content": "?", "x": 80, "y": 190, "font_size": 28, "delay_ms": 1000}
+    ],
+    "emotion_signal": "neutral",
+    "topic_detected": "photosynthesis"
+  },
+  {
+    "spoken_text": "Sunlight acts like the plant's power source — it provides the energy needed to kick off the food-making process. Without sunlight, the other ingredients just cannot react. What do you think happens to water and carbon dioxide once sunlight is absorbed?",
+    "whiteboard_commands": [
+      {"type": "circle", "cx": 200, "cy": 100, "r": 40, "color": "yellow", "delay_ms": 0},
+      {"type": "write", "content": "Sunlight = Energy", "x": 250, "y": 85, "font_size": 22, "delay_ms": 300},
+      {"type": "write", "content": "Water (H₂O)", "x": 80, "y": 200, "font_size": 20, "delay_ms": 700},
+      {"type": "write", "content": "Carbon Dioxide (CO₂)", "x": 80, "y": 240, "font_size": 20, "delay_ms": 900}
+    ],
+    "emotion_signal": "neutral",
+    "topic_detected": "photosynthesis"
+  },
+  {
+    "spoken_text": "You are exactly right — sunlight provides the energy that lets water and carbon dioxide combine inside the plant's leaves. The plant uses chlorophyll to capture that sunlight and start the reaction. Can you guess what the plant produces from this process?",
+    "whiteboard_commands": [
+      {"type": "clear", "delay_ms": 0},
+      {"type": "write", "content": "Sunlight + H₂O + CO₂", "x": 80, "y": 80, "font_size": 24, "delay_ms": 400},
+      {"type": "arrow", "from_x": 80, "from_y": 120, "to_x": 80, "to_y": 180, "color": "yellow", "delay_ms": 800},
+      {"type": "write", "content": "→ Products?", "x": 80, "y": 190, "font_size": 28, "delay_ms": 1200}
+    ],
+    "emotion_signal": "encouraging",
+    "topic_detected": "photosynthesis"
+  },
+  {
+    "spoken_text": "Excellent deduction! Yes, photosynthesis produces glucose (a sugar that plants use for energy and growth) and oxygen, which is released into the air for us to breathe. You have connected the pieces perfectly! Can you think of why photosynthesis is important for animals and humans too?",
+    "whiteboard_commands": [
+      {"type": "write", "content": "Products of Photosynthesis", "x": 80, "y": 60, "font_size": 24, "delay_ms": 0},
+      {"type": "write", "content": "✓ Glucose (C₆H₁₂O₆)", "x": 80, "y": 130, "font_size": 22, "color": "#7ddf7d", "delay_ms": 500},
+      {"type": "write", "content": "✓ Oxygen (O₂)", "x": 80, "y": 180, "font_size": 22, "color": "#7ec8e3", "delay_ms": 900},
+      {"type": "highlight", "target_text": "✓ Glucose (C₆H₁₂O₆)", "color": "yellow", "delay_ms": 1400}
+    ],
+    "emotion_signal": "encouraging",
+    "topic_detected": "photosynthesis"
+  }
+]
