@@ -48,10 +48,18 @@ async def _enable_pgvector() -> None:
     logger.info("pgvector extension enabled.")
 
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+
 def _run_alembic_migrations() -> None:
     """
     Run Alembic migrations synchronously. The migration env.py handles
     async engine setup internally via asyncio.run().
+
+    Because env.py calls asyncio.run() (which would raise RuntimeError if
+    called inside a running event loop), this function is intended to be
+    run in a thread via _run_alembic_migrations_async().
     """
     root_dir = Path(__file__).resolve().parents[3]  # up to project root
     alembic_ini = root_dir / "alembic.ini"
@@ -59,6 +67,7 @@ def _run_alembic_migrations() -> None:
         logger.warning("alembic.ini not found at %s — skipping migrations.", alembic_ini)
         return
     cfg = Config(str(alembic_ini))
+    cfg.set_main_option("script_location", str(root_dir / "migrations"))
     command.upgrade(cfg, "head")
     logger.info("Alembic migrations applied (head).")
 
@@ -69,7 +78,9 @@ async def init_db() -> None:
     Safe to call multiple times (idempotent).
     """
     await _enable_pgvector()
-    _run_alembic_migrations()
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        await loop.run_in_executor(pool, _run_alembic_migrations)
     # Seed subjects is handled by seed_subjects() called separately or
     # within the repository layer so it shares the same session lifecycle.
     logger.info("Database initialisation complete.")
