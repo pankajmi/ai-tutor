@@ -233,14 +233,17 @@ class VoiceInputManager:
 
     def _load_whisper_model(self):
         """
-        Loads whisper.cpp via the `whispercpp` Python package.
+        Loads whisper.cpp via the `pywhispercpp` package.
 
-        On Apple Silicon, whispercpp's prebuilt wheels are compiled with
-        Metal support, giving GPU acceleration automatically on M-series chips.
+        On Apple Silicon, pywhispercpp uses Metal acceleration automatically
+        on M-series chips.
         """
-        from whispercpp import Whisper
+        from pywhispercpp.model import Model
 
-        model = Whisper.from_pretrained(self.stt_config.model_name)
+        model = Model(
+            self.stt_config.model_name,
+            n_threads=self.stt_config.n_threads,
+        )
         return model
 
     # ---------------------------------------------------------------- #
@@ -384,16 +387,5 @@ class VoiceInputManager:
 
     def _transcribe(self, audio: np.ndarray) -> str:
         """Blocking whisper.cpp inference call. Run via asyncio.to_thread."""
-        result = self._whisper_model.transcribe(
-            audio,
-            language=self.stt_config.language,
-        )
-        # whispercpp's high-level API typically returns either a string or
-        # an object/list of segments depending on version; normalize here.
-        if isinstance(result, str):
-            return result
-        if hasattr(result, "text"):
-            return result.text
-        if isinstance(result, list):
-            return " ".join(getattr(seg, "text", str(seg)) for seg in result)
-        return str(result)
+        segments = self._whisper_model.transcribe(audio)
+        return " ".join(seg.text for seg in segments if seg.text).strip()
