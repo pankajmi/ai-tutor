@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.uv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Env
+.env
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# Docker volumes (named volumes, not bind-mounted, but ignore local data dirs if added)
+docker/data/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
