@@ -167,6 +167,12 @@ class WebSocketSessionManager:
     async def _handle_voice_transcription(self, text: str) -> None:
         """Called by VoiceLoop when STT transcribes a voice utterance."""
         logger.info("Voice transcription: %.80s", text)
+        # Echo transcription back to frontend so the chat log can show
+        # what the child said (voice path has no other way to get it).
+        try:
+            await self.ws.send_json({"type": "transcription", "text": text})
+        except Exception:
+            logger.debug("Failed to send transcription echo to WS")
         await self._process_speech(text)
 
     # ---------------------------------------------------------------- #

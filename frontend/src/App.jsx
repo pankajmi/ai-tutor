@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
 import Dashboard from "./Dashboard";
 
-const Whiteboard = lazy(() => import("./Whiteboard"));
+const VoiceSessionShell = lazy(() => import("./VoiceSessionShell"));
 
 export default function App() {
   const path = window.location.pathname.replace(/\/$/, "") || "/";
@@ -22,7 +22,7 @@ export default function App() {
         </div>
       }
     >
-      <Whiteboard childId={childId} />
+      <VoiceSessionShell childId={childId} />
     </Suspense>
   );
 }
