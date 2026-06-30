@@ -12,7 +12,8 @@ on_user_speech handler and is useful for verifying:
     - barge-in works: interrupt the echo mid-sentence by speaking again
 
 Usage:
-    uv run python backend/app/voice/test_voice_loop.py
+    uv run python -m app.voice.test_voice_loop
+    uv run python -m app.voice.test_voice_loop --device 1   # specific mic
 
 Try this manually:
     1. Say something short -> tutor echoes it back.
@@ -23,10 +24,12 @@ Try this manually:
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 
-from voice_loop import VoiceLoop
+from app.voice.stt import VoiceInputManager
+from app.voice.voice_loop import VoiceLoop
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger("echo_test")
 
 
-async def main() -> None:
+async def main(device: int | str | None = None) -> None:
     loop_ref: dict[str, VoiceLoop] = {}
 
     async def on_user_speech(text: str) -> None:
@@ -45,7 +48,11 @@ async def main() -> None:
         print(f"<< Tutor echoing: {response!r}\n")
         await loop_ref["loop"].speak(response)
 
-    voice_loop = VoiceLoop(on_user_speech=on_user_speech)
+    voice_input = VoiceInputManager(device=device) if device is not None else None
+    voice_loop = VoiceLoop(
+        on_user_speech=on_user_speech,
+        voice_input=voice_input,
+    )
     loop_ref["loop"] = voice_loop
 
     print("Loading models (this may take a moment)...")
@@ -66,4 +73,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Echo test for VoiceLoop")
+    parser.add_argument("--device", type=int, default=None, help="Input device index")
+    args = parser.parse_args()
+    asyncio.run(main(device=args.device))

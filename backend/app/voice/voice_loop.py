@@ -135,11 +135,11 @@ class VoiceLoop:
         config: Optional[VoiceLoopConfig] = None,
     ) -> None:
         self.on_user_speech = on_user_speech
+        self.config = config or VoiceLoopConfig()
         self.voice_input = voice_input or VoiceInputManager(
             vad_config=self.config._to_vad_config()
         )
         self.voice_output = voice_output or VoiceOutputManager()
-        self.config = config or VoiceLoopConfig()
 
         self._barge_in_watcher: Optional[_BargeInWatcher] = None
         self._running = False
