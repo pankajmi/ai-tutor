@@ -1,9 +1,10 @@
 """
 WebSocket session manager for the AI tutor.
 
-Wires the LangGraph Orchestrator to a single WebSocket connection via
-Redis Pub/Sub for independent streaming of speech and whiteboard commands.
-Persists session state to Postgres on disconnect.
+Handles text (JSON) and binary (audio) frames over a single WebSocket.
+Wires the orchestrator to voice I/O (STT/TTS) via a VoiceLoop when the
+browser sends audio frames. JSON messages (speech, whiteboard, emotion)
+are forwarded independently so the frontend can process them in parallel.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+import numpy as np
 import redis.asyncio as aioredis
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -24,6 +26,9 @@ from agents.orchestrator import Orchestrator, SessionState
 from .db.database import async_session_factory
 from .db.models import Child, Session as DbSession
 from .db.seed import seed_subjects
+from .voice.audio_base import AudioSink
+from .voice.voice_loop import VoiceLoop, VoiceLoopConfig
+from .voice.voice_session import VoiceSessionConfig
 
 logger = logging.getLogger("ai_tutor.ws_manager")
 
@@ -45,11 +50,13 @@ def _channel_whiteboard(child_id: str) -> str:
 
 class WebSocketSessionManager:
     """
-    Manages a single WebSocket session for one child.
+    Manages a single WebSocket session for one child, supporting both
+    text (JSON) and binary (audio) frames.
 
-    Usage (from main.py):
-        manager = WebSocketSessionManager(websocket, child_id)
-        await manager.run()
+    When the browser sends binary audio frames, a voice pipeline is
+    lazily initialized (WebSocketSource → VoiceInputManager → Whisper →
+    Orchestrator → Kokoro → WebSocketSink). Text-only sessions skip the
+    voice pipeline and receive JSON messages only.
     """
 
     def __init__(self, websocket: WebSocket, child_id: str) -> None:
@@ -58,8 +65,16 @@ class WebSocketSessionManager:
 
         self.orchestrator = Orchestrator()
         self.session: Optional[SessionState] = None
-        self.db_session_id: Optional[str] = None  # Postgres session.id once created
+        self.db_session_id: Optional[str] = None
 
+        # Voice pipeline (lazy)
+        self._voice_loop: Optional[VoiceLoop] = None
+        self._ws_source: Optional["WebSocketSource"] = None
+        self._ws_sink: Optional["WebSocketSink"] = None
+        self._voice_enabled = False
+        self._frame_count = 0  # debug
+
+        # Redis Pub/Sub
         self._redis: Optional[aioredis.Redis] = None
         self._pubsub: Optional[aioredis.client.PubSub] = None
         self._listener_task: Optional[asyncio.Task] = None
@@ -79,21 +94,86 @@ class WebSocketSessionManager:
 
         try:
             while True:
-                raw = await self.ws.receive_json()
-                await self._dispatch(raw)
+                msg = await self.ws.receive()
+                if msg["type"] == "websocket.disconnect":
+                    break
+                if msg.get("bytes") is not None:
+                    await self._handle_audio_bytes(msg["bytes"])
+                elif msg.get("text") is not None:
+                    data = json.loads(msg["text"])
+                    await self._dispatch(data)
         except WebSocketDisconnect:
             logger.info("WebSocket disconnected: child_id=%s", self.child_id)
         except Exception:
             logger.exception("Unexpected error in WebSocket loop")
         finally:
+            await self._stop_voice_pipeline()
             await self._on_disconnect()
+
+    # ---------------------------------------------------------------- #
+    # Voice pipeline (lazy, on binary frame)
+    # ---------------------------------------------------------------- #
+
+    async def _ensure_voice_pipeline(self) -> None:
+        """Set up the voice pipeline on first binary audio frame."""
+        if self._voice_enabled:
+            return
+        self._voice_enabled = True
+
+        from .voice.websocket_source import WebSocketSource
+        from .voice.websocket_sink import WebSocketSink
+        from .voice.stt import VoiceInputManager
+        from .voice.tts import VoiceOutputManager
+
+        self._ws_source = WebSocketSource()
+        self._ws_sink = WebSocketSink(self.ws)
+
+        voice_input = VoiceInputManager(source=self._ws_source)
+        voice_output = VoiceOutputManager(sink=self._ws_sink)
+
+        self._voice_loop = VoiceLoop(
+            on_user_speech=self._handle_voice_transcription,
+            voice_input=voice_input,
+            voice_output=voice_output,
+            config=VoiceLoopConfig(end_of_speech_silence_ms=1500),
+        )
+        await self._voice_loop.start()
+        logger.info("Voice pipeline initialised for child_id=%s", self.child_id)
+
+    async def _stop_voice_pipeline(self) -> None:
+        if self._voice_loop is not None:
+            await self._voice_loop.stop()
+            self._voice_loop = None
+        self._ws_source = None
+        self._ws_sink = None
+        self._voice_enabled = False
+
+    async def _handle_audio_bytes(self, data: bytes) -> None:
+        """Process a binary audio frame from the browser mic."""
+        await self._ensure_voice_pipeline()
+        if self._ws_source is None:
+            return
+        frame = np.frombuffer(data, dtype=np.float32)
+        self._ws_source.push_frame(frame)
+        self._frame_count += 1
+        if self._frame_count % 50 == 0:
+            logger.debug(
+                "Audio frames received: %d, shape=%s, mean=%.4f, max=%.4f",
+                self._frame_count, frame.shape,
+                float(np.mean(np.abs(frame))),
+                float(np.max(np.abs(frame))),
+            )
+
+    async def _handle_voice_transcription(self, text: str) -> None:
+        """Called by VoiceLoop when STT transcribes a voice utterance."""
+        logger.info("Voice transcription: %.80s", text)
+        await self._process_speech(text)
 
     # ---------------------------------------------------------------- #
     # Redis lifecycle
     # ---------------------------------------------------------------- #
 
     async def _init_redis(self) -> None:
-        """Connect to Redis and subscribe to this child's channels."""
         try:
             self._redis = aioredis.from_url(REDIS_URL, decode_responses=True)
             self._pubsub = self._redis.pubsub()
@@ -101,11 +181,8 @@ class WebSocketSessionManager:
                 _channel_speech(self.child_id),
                 _channel_whiteboard(self.child_id),
             )
-            logger.debug("Redis subscribed: child_id=%s", self.child_id)
         except Exception:
-            logger.warning(
-                "Redis unavailable — falling back to direct WebSocket writes"
-            )
+            logger.warning("Redis unavailable — using direct WS writes")
             self._redis = None
             self._pubsub = None
 
@@ -123,34 +200,26 @@ class WebSocketSessionManager:
     # ---------------------------------------------------------------- #
 
     async def _listen_redis(self) -> None:
-        """
-        Background task: consume from Redis Pub/Sub and write to the
-        WebSocket. Each message type is sent as a separate JSON frame so
-        the frontend can process speech and whiteboard independently.
-        """
         if self._pubsub is None:
             return
-
         try:
             async for message in self._pubsub.listen():
                 if message["type"] != "message":
                     continue
-                channel: str = message["channel"]
-                data: str = message["data"]
-                await self._send_redis_message(channel, data)
+                await self._send_redis_message(
+                    message["channel"], message["data"]
+                )
         except asyncio.CancelledError:
             pass
         except Exception:
             logger.exception("Redis listener error")
 
     async def _send_redis_message(self, channel: str, data: str) -> None:
-        """Parse a Redis pub/sub message and send the appropriate WS frame."""
         try:
             payload = json.loads(data)
         except json.JSONDecodeError:
             logger.warning("Invalid JSON on channel %s: %.80s", channel, data)
             return
-
         try:
             if channel.endswith(":speech"):
                 await self.ws.send_json({
@@ -161,7 +230,6 @@ class WebSocketSessionManager:
                     "type": "emotion",
                     "signal": payload["emotion"],
                 })
-
             elif channel.endswith(":whiteboard"):
                 await self.ws.send_json({
                     "type": "whiteboard",
@@ -176,18 +244,14 @@ class WebSocketSessionManager:
 
     async def _dispatch(self, data: dict[str, Any]) -> None:
         msg_type = data.get("type", "")
-        logger.debug("Incoming message type=%s", msg_type)
-
         handler = {
             "session_start": self._handle_session_start,
             "speech": self._handle_speech,
             "session_end": self._handle_session_end,
         }.get(msg_type)
-
         if handler is not None:
             await handler(data)
         else:
-            logger.warning("Unknown message type: %s", msg_type)
             await self.ws.send_json({
                 "type": "error",
                 "message": f"Unknown message type: {msg_type}",
@@ -198,10 +262,8 @@ class WebSocketSessionManager:
     # ---------------------------------------------------------------- #
 
     async def _handle_session_start(self, data: dict[str, Any]) -> None:
-        """Initialise a new tutoring session."""
         subject = data.get("subject", "Math")
         topic = data.get("topic", "")
-
         self.session = SessionState(
             child_id=self.child_id,
             subject=subject,
@@ -211,12 +273,7 @@ class WebSocketSessionManager:
             last_tutor_response=None,
             pending_whiteboard_commands=[],
         )
-
-        logger.info(
-            "Session started: child=%s subject=%s topic=%s",
-            self.child_id, subject, topic,
-        )
-
+        logger.info("Session started: child=%s subject=%s topic=%s", self.child_id, subject, topic)
         await self.ws.send_json({
             "type": "tutor_speech",
             "text": (
@@ -225,19 +282,14 @@ class WebSocketSessionManager:
                 f"What would you like to learn about?"
             ),
         })
-        await self.ws.send_json({
-            "type": "emotion",
-            "signal": "encouraging",
-        })
+        await self.ws.send_json({"type": "emotion", "signal": "encouraging"})
 
     async def _handle_speech(self, data: dict[str, Any]) -> None:
-        """Process a child utterance through the orchestrator."""
+        """Process a text chat message from the browser."""
         text = data.get("text", "").strip()
         if not text:
             return
-
         if self.session is None:
-            # Auto-start session if client didn't send session_start.
             self.session = SessionState(
                 child_id=self.child_id,
                 subject="Math",
@@ -247,9 +299,11 @@ class WebSocketSessionManager:
                 last_tutor_response=None,
                 pending_whiteboard_commands=[],
             )
+        await self._process_speech(text)
 
-        logger.info("Processing speech (%.80s)", text)
-
+    async def _process_speech(self, text: str) -> None:
+        """Run orchestrator and send response."""
+        logger.info("Processing: %.80s", text)
         try:
             self.session = await self.orchestrator.ainvoke(text, self.session)
         except Exception:
@@ -264,14 +318,13 @@ class WebSocketSessionManager:
         if response is None:
             return
 
-        # Publish to Redis channels (falls back to direct send if Redis down).
         await self._publish_or_send(response)
 
+        # If voice pipeline is active, synthesize and send TTS audio.
+        if self._voice_enabled and self._voice_loop is not None and response.spoken_text:
+            await self._voice_loop.speak(response.spoken_text)
+
     async def _publish_or_send(self, response) -> None:
-        """
-        Publish speech and whiteboard to Redis channels for parallel delivery.
-        Falls back to direct WebSocket send if Redis is unavailable.
-        """
         speech_payload = json.dumps({
             "text": response.spoken_text,
             "emotion": response.emotion_signal,
@@ -282,11 +335,8 @@ class WebSocketSessionManager:
             else None
         )
 
-        # Publish speech — send immediately via Redis or direct.
         if self._redis is not None:
-            await self._redis.publish(
-                _channel_speech(self.child_id), speech_payload
-            )
+            await self._redis.publish(_channel_speech(self.child_id), speech_payload)
         else:
             await self.ws.send_json({
                 "type": "tutor_speech",
@@ -297,12 +347,9 @@ class WebSocketSessionManager:
                 "signal": response.emotion_signal,
             })
 
-        # Publish whiteboard commands independently.
         if wb_payload is not None:
             if self._redis is not None:
-                await self._redis.publish(
-                    _channel_whiteboard(self.child_id), wb_payload
-                )
+                await self._redis.publish(_channel_whiteboard(self.child_id), wb_payload)
             else:
                 await self.ws.send_json({
                     "type": "whiteboard",
@@ -312,16 +359,12 @@ class WebSocketSessionManager:
                 })
 
     async def _handle_session_end(self, data: dict[str, Any] | None = None) -> None:
-        """Persist the session and close the connection."""
         await self._persist_session()
         await self.ws.send_json({
             "type": "tutor_speech",
             "text": "Great work today! Come back anytime.",
         })
-        await self.ws.send_json({
-            "type": "emotion",
-            "signal": "encouraging",
-        })
+        await self.ws.send_json({"type": "emotion", "signal": "encouraging"})
         await self.ws.close()
 
     # ---------------------------------------------------------------- #
@@ -329,42 +372,26 @@ class WebSocketSessionManager:
     # ---------------------------------------------------------------- #
 
     async def _on_disconnect(self) -> None:
-        """Persist session state when the client disconnects."""
         await self._persist_session()
         await self._cleanup()
 
     async def _persist_session(self) -> None:
-        """Save the session to Postgres (idempotent, safe to call multiple times)."""
         if self.session is None:
             return
-
         try:
             async with async_session_factory() as db_sess:
                 repo = __import__(
                     "app.db.repository", fromlist=["MemoryRepository"]
                 ).MemoryRepository(db_sess)
-
-                # Ensure child exists.
                 child = await repo.get_child(self.child_id)
                 if child is None:
-                    db_sess.add(
-                        Child(
-                            id=self.child_id,
-                            name=f"Child_{self.child_id[:8]}",
-                            grade=5,
-                        )
-                    )
+                    db_sess.add(Child(id=self.child_id, name=f"Child_{self.child_id[:8]}", grade=5))
                     await db_sess.commit()
-
-                # Upsert the DB session row.
                 subject_id = self.session["subject"].lower().replace(" ", "_")
                 topics = self.session.get("current_topic", "")
                 topics_list = [topics] if topics else []
-
                 db_session = DbSession(
-                    id=self.db_session_id or str(
-                        __import__("uuid").uuid4()
-                    ),
+                    id=self.db_session_id or str(__import__("uuid").uuid4()),
                     child_id=self.child_id,
                     subject_id=subject_id,
                     ended_at=datetime.now(timezone.utc),
@@ -372,19 +399,13 @@ class WebSocketSessionManager:
                 )
                 db_session = await db_sess.merge(db_session)
                 await db_sess.commit()
-
                 if self.db_session_id is None:
                     self.db_session_id = db_session.id
-
-                logger.info(
-                    "Session persisted: child=%s subject=%s",
-                    self.child_id, subject_id,
-                )
+                logger.info("Session persisted: child=%s subject=%s", self.child_id, subject_id)
         except Exception:
             logger.exception("Failed to persist session")
 
     async def _cleanup(self) -> None:
-        """Cancel background tasks and close Redis connections."""
         if self._listener_task is not None:
             self._listener_task.cancel()
             try:

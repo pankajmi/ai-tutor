@@ -29,6 +29,7 @@ import asyncio
 import logging
 
 from app.voice.stt import VoiceInputManager
+from app.voice.sounddevice_source import SoundDeviceSource
 from app.voice.voice_loop import VoiceLoop
 
 logging.basicConfig(
@@ -48,7 +49,8 @@ async def main(device: int | str | None = None) -> None:
         print(f"<< Tutor echoing: {response!r}\n")
         await loop_ref["loop"].speak(response)
 
-    voice_input = VoiceInputManager(device=device) if device is not None else None
+    source = SoundDeviceSource(device=device) if device is not None else None
+    voice_input = VoiceInputManager(source=source) if source is not None else None
     voice_loop = VoiceLoop(
         on_user_speech=on_user_speech,
         voice_input=voice_input,

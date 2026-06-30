@@ -222,6 +222,7 @@ class VoiceLoop:
         utterance-buffering for the duration — the barge-in watcher remains
         active throughout via the independent frame tap.
         """
+        logger.debug("speak() called, pausing STT")
         self.voice_input.paused = True
         if self._barge_in_watcher is not None:
             self._barge_in_watcher.reset()
@@ -239,6 +240,9 @@ class VoiceLoop:
             # barge-in path handles its own un-pause sequencing directly.
             if not self.voice_output.is_speaking():
                 self.voice_input.paused = False
+                logger.debug("speak() done, STT resumed")
+            else:
+                logger.debug("speak() done but TTS still speaking, STT stays paused")
 
     # ---------------------------------------------------------------- #
     # Main listening loop (drives on_user_speech)
@@ -252,11 +256,19 @@ class VoiceLoop:
         barge-in has just unpaused it — so no additional gating is needed
         here.
         """
-        async for text in self.voice_input.listen():
-            if not self._running:
+        while self._running:
+            try:
+                async for text in self.voice_input.listen():
+                    if not self._running:
+                        break
+                    logger.info("Child said: %r", text)
+                    await self._dispatch(text)
+            except asyncio.CancelledError:
                 break
-            logger.info("Child said: %r", text)
-            await self._dispatch(text)
+            except Exception:
+                logger.exception("Listen loop error, restarting...")
+                # brief pause before retrying
+                await asyncio.sleep(0.5)
 
     async def _dispatch(self, text: str) -> None:
         result = self.on_user_speech(text)

@@ -29,7 +29,9 @@ from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
-import sounddevice as sd
+
+from .audio_base import AudioSink
+from .sounddevice_sink import SoundDeviceSink
 
 logger = logging.getLogger("ai_tutor.voice.tts")
 
@@ -121,8 +123,13 @@ class VoiceOutputManager:
         await manager.shutdown()
     """
 
-    def __init__(self, config: Optional[TTSConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[TTSConfig] = None,
+        sink: Optional[AudioSink] = None,
+    ) -> None:
         self.config = config or TTSConfig()
+        self._sink = sink or SoundDeviceSink()
 
         self._pipeline = None  # lazy-loaded Kokoro pipeline
 
@@ -131,7 +138,6 @@ class VoiceOutputManager:
         # playback, not race arbitrarily far ahead.
         self._audio_queue: "queue.Queue[Optional[np.ndarray]]" = queue.Queue(maxsize=8)
 
-        self._stream: Optional[sd.OutputStream] = None
         self._playback_thread: Optional[threading.Thread] = None
 
         self._speaking = threading.Event()
@@ -145,17 +151,16 @@ class VoiceOutputManager:
     # ---------------------------------------------------------------- #
 
     async def start(self) -> None:
-        """Load the Kokoro model. Call once before first speak()."""
+        """Load the Kokoro model and prepare the audio sink."""
         logger.info("Loading Kokoro TTS pipeline...")
         self._pipeline = await asyncio.to_thread(self._load_pipeline)
+        await self._sink.start()
         logger.info("Kokoro TTS pipeline loaded (voice=%s).", self.config.voice)
 
     async def shutdown(self) -> None:
         """Stop any playback and release resources."""
         self.stop()
-        if self._stream is not None:
-            self._stream.close()
-            self._stream = None
+        await self._sink.close()
 
     def _load_pipeline(self):
         """
@@ -235,8 +240,7 @@ class VoiceOutputManager:
                     self._audio_queue.get_nowait()
                 except queue.Empty:
                     break
-            if self._stream is not None and self._stream.active:
-                self._stream.abort()
+        asyncio.ensure_future(self._sink.stop())
         self._speaking.clear()
         logger.debug("Playback stopped (interrupted).")
 
@@ -292,17 +296,10 @@ class VoiceOutputManager:
 
     def _playback_loop(self) -> None:
         """
-        Runs on a dedicated thread for the lifetime of the manager. Opens an
-        output stream per speak() call's audio sequence and writes chunks as
-        they arrive, exiting cleanly on the end-of-utterance marker or a
-        stop() interruption.
+        Runs on a dedicated thread for the lifetime of the manager. Writes
+        audio chunks to the sink as they arrive, exiting cleanly on the
+        end-of-utterance marker or a stop() interruption.
         """
-        with self._playback_lock:
-            self._stream = sd.OutputStream(
-                samplerate=SAMPLE_RATE, channels=1, dtype="float32"
-            )
-            self._stream.start()
-
         while True:
             try:
                 audio = self._audio_queue.get(timeout=0.5)
@@ -318,7 +315,7 @@ class VoiceOutputManager:
                 break
 
             try:
-                self._stream.write(audio)
-            except sd.PortAudioError:
-                # Stream was aborted by stop() concurrently; exit quietly.
+                self._sink.write(audio)
+            except Exception:
+                logger.exception("Sink write error")
                 break

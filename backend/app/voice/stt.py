@@ -24,7 +24,9 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 import numpy as np
-import sounddevice as sd
+
+from .audio_base import AudioSource
+from .sounddevice_source import SoundDeviceSource
 
 logger = logging.getLogger("ai_tutor.voice.stt")
 
@@ -42,7 +44,7 @@ class VADConfig:
     """Tunable parameters for speech boundary detection."""
 
     # Probability threshold above which a frame is considered speech.
-    speech_threshold: float = 0.5
+    speech_threshold: float = 0.65
 
     # How many consecutive ms of silence after speech before we consider
     # the utterance finished. Children naturally pause 1-2 seconds to
@@ -132,18 +134,16 @@ class VoiceInputManager:
         vad_config: Optional[VADConfig] = None,
         stt_config: Optional[STTConfig] = None,
         on_transcription: Optional[Callable[[str], None]] = None,
-        device: Optional[int | str] = None,
+        source: Optional[AudioSource] = None,
     ) -> None:
         self.vad_config = vad_config or VADConfig()
         self.stt_config = stt_config or STTConfig()
         self._on_transcription = on_transcription
-        self._device = device
+        self._source = source or SoundDeviceSource()
 
         self._vad_model = None  # lazy-loaded Silero VAD model
         self._whisper_model = None  # lazy-loaded whisper.cpp model
 
-        self._stream: Optional[sd.InputStream] = None
-        self._audio_queue: asyncio.Queue[np.ndarray] = asyncio.Queue()
         self._transcription_queue: asyncio.Queue[str] = asyncio.Queue()
 
         self._is_speaking = False
@@ -181,18 +181,16 @@ class VoiceInputManager:
         logger.info("Loading whisper.cpp model: %s", self.stt_config.model_name)
         self._whisper_model = await asyncio.to_thread(self._load_whisper_model)
 
+        await self._source.start()
+
         self._running = True
-        self._open_input_stream()
         self._processing_task = asyncio.create_task(self._process_audio_loop())
         logger.info("VoiceInputManager started.")
 
     async def stop(self) -> None:
         """Stop capturing and release resources."""
         self._running = False
-        if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+        await self._source.stop()
         if self._processing_task is not None:
             self._processing_task.cancel()
             try:
@@ -247,29 +245,6 @@ class VoiceInputManager:
         return model
 
     # ---------------------------------------------------------------- #
-    # Audio capture (sounddevice callback -> asyncio queue bridge)
-    # ---------------------------------------------------------------- #
-
-    def _open_input_stream(self) -> None:
-        def _callback(indata, frames, time_info, status):
-            if status:
-                logger.warning("Audio input status: %s", status)
-            # Copy because sounddevice reuses the buffer.
-            mono = indata[:, 0].copy()
-            if self._loop is not None:
-                self._loop.call_soon_threadsafe(self._audio_queue.put_nowait, mono)
-
-        self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="float32",
-            blocksize=FRAME_SAMPLES,
-            device=self._device,
-            callback=_callback,
-        )
-        self._stream.start()
-
-    # ---------------------------------------------------------------- #
     # VAD + utterance assembly loop
     # ---------------------------------------------------------------- #
 
@@ -281,7 +256,9 @@ class VoiceInputManager:
         frame_duration_ms = FRAME_DURATION_MS
 
         while self._running:
-            frame = await self._audio_queue.get()
+            frame = await self._source.read_frame()
+            if frame is None:
+                break
 
             if self.frame_observer is not None:
                 self.frame_observer(frame)
@@ -292,6 +269,7 @@ class VoiceInputManager:
                 # in-progress utterance so we don't stitch together audio
                 # from before/after the pause.
                 if self._is_speaking:
+                    logger.debug("SttPaused: resetting utterance")
                     self._reset_utterance_state()
                 continue
 
@@ -359,10 +337,11 @@ class VoiceInputManager:
         audio = self._utterance.as_array()
         self._reset_utterance_state()
 
+        logger.debug("Utterance ended: %.0fms, %.0f samples", duration_ms, len(audio))
+
         if duration_ms < self.vad_config.min_utterance_ms:
-            logger.debug(
-                "Discarding short utterance (%.0fms < %.0fms threshold) — "
-                "likely noise/cough/tap.",
+            logger.info(
+                "Discarding short utterance (%.0fms < %.0fms).",
                 duration_ms,
                 self.vad_config.min_utterance_ms,
             )
@@ -376,9 +355,7 @@ class VoiceInputManager:
 
         text = text.strip()
         if not text:
-            # Whisper sometimes returns empty string for non-speech noise
-            # that slipped past VAD (e.g. low-confidence murmurs).
-            logger.debug("Empty transcription, discarding.")
+            logger.info("Empty transcription (%.0fms) discarding — likely noise.", duration_ms)
             return
 
         await self._transcription_queue.put(text)

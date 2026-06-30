@@ -26,11 +26,13 @@ import sys
 
 import redis.asyncio as aioredis
 
+_log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, _log_level, logging.INFO),
     format="%(levelname)-5s [%(name)s] %(message)s",
     stream=sys.stderr,
 )
+logger.info("Log level set to %s", _log_level)
 
 # Squelch noisy libs
 logging.getLogger("httpx").setLevel(logging.WARNING)

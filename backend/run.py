@@ -14,14 +14,17 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 
+_log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, _log_level, logging.INFO),
     format="%(levelname)-5s [%(name)s] %(message)s",
     stream=sys.stderr,
 )
+logging.info("Log level set to %s", _log_level)
 
 # Squelch noisy libs
 logging.getLogger("httpx").setLevel(logging.WARNING)

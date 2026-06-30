@@ -18,6 +18,7 @@ import logging
 import time
 
 from stt import STTConfig, VADConfig, VoiceInputManager
+from sounddevice_source import SoundDeviceSource
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,10 +33,11 @@ def list_devices() -> None:
 
 
 async def main(device: int | str | None) -> None:
+    source = SoundDeviceSource(device=device) if device is not None else None
     manager = VoiceInputManager(
         vad_config=VADConfig(),
         stt_config=STTConfig(model_name="medium.en"),
-        device=device,
+        source=source,
     )
 
     print("Loading models (whisper.cpp medium.en + Silero VAD)...")
