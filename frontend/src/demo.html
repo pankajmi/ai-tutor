@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Whiteboard Demo</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #root { width: 100%; height: 100%; }
+    body { background: #111; }
+    #toolbar {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 8px; z-index: 10;
+    }
+    #toolbar button {
+      padding: 8px 16px; border: 1px solid #444; border-radius: 6px;
+      background: #222; color: #ddd; cursor: pointer; font-size: 13px;
+      font-family: monospace;
+    }
+    #toolbar button:hover { background: #333; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <div id="toolbar">
+    <button onclick="demoFraction()">Fractions</button>
+    <button onclick="demoSentence()">Sentence Diagram</button>
+    <button onclick="demoScience()">Water Cycle</button>
+    <button onclick="clearBoard()">Clear</button>
+  </div>
+  <script type="module">
+    import React from 'react';
+    import ReactDOM from 'react-dom/client';
+    import Whiteboard from './Whiteboard.jsx';
+
+    let ws = null;
+
+    function send(commands) {
+      // Simulate a WS message
+      const event = new MessageEvent('message', {
+        data: JSON.stringify({ type: 'whiteboard', commands })
+      });
+      window.__ws_onmessage(event);
+    }
+
+    // Patch the Whiteboard to accept simulation
+    window.originalConnect = Whiteboard.prototype;
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(React.createElement(Whiteboard, { childId: 'demo' }));
+
+    // Expose the WS onmessage handler after mount
+    setTimeout(() => {
+      window.__ws_onmessage = (ev) => {
+        // The Whiteboard component handles it internally
+        console.log('WS message:', ev.data);
+      };
+    }, 500);
+
+    window.demoFraction = () => {
+      const cmds = [
+        { type: 'write', content: '3', x: 80, y: 80, font_size: 48, delay_ms: 0 },
+        { type: 'write', content: '×', x: 140, y: 80, font_size: 36, delay_ms: 300 },
+        { type: 'write', content: '4', x: 190, y: 80, font_size: 48, delay_ms: 600 },
+        { type: 'write', content: '=', x: 250, y: 80, font_size: 36, delay_ms: 900 },
+        { type: 'write', content: '?', x: 300, y: 80, font_size: 48, delay_ms: 1200 },
+        { type: 'circle', cx: 300, cy: 85, r: 35, color: 'red', delay_ms: 500 },
+        { type: 'clear', delay_ms: 3000 },
+        { type: 'write', content: 'Let us break it down', x: 60, y: 60, font_size: 28, delay_ms: 0 },
+        { type: 'write', content: '3 × 4 = 3 + 3 + 3 + 3', x: 60, y: 140, font_size: 28, delay_ms: 800 },
+        { type: 'box', x: 50, y: 120, width: 340, height: 60, color: 'yellow', delay_ms: 400 },
+        { type: 'write', content: '= 12', x: 80, y: 240, font_size: 40, delay_ms: 2000 },
+        { type: 'highlight', target_text: '3 × 4 = 3 + 3 + 3 + 3', color: 'yellow', delay_ms: 1500 },
+        { type: 'arrow', from: [380, 160], to: [420, 260], delay_ms: 2500 },
+      ];
+      send(cmds);
+    };
+
+    window.demoSentence = () => {
+      const cmds = [
+        { type: 'write', content: 'The cat sat on the mat.', x: 60, y: 60, font_size: 28, delay_ms: 0 },
+        { type: 'box', x: 60, y: 50, width: 120, height: 48, color: 'blue', delay_ms: 600 },
+        { type: 'write', content: 'Subject', x: 70, y: 110, font_size: 18, color: '#7ec8e3', delay_ms: 900 },
+        { type: 'box', x: 200, y: 50, width: 100, height: 48, color: 'green', delay_ms: 1200 },
+        { type: 'write', content: 'Verb', x: 215, y: 110, font_size: 18, color: '#7ddf7d', delay_ms: 1500 },
+        { type: 'box', x: 320, y: 50, width: 170, height: 48, color: 'yellow', delay_ms: 1800 },
+        { type: 'write', content: 'Prepositional Phrase', x: 322, y: 110, font_size: 16, color: '#ffe066', delay_ms: 2100 },
+        { type: 'arrow', from: [120, 95], to: [120, 140], color: '#7ec8e3', delay_ms: 2400 },
+        { type: 'arrow', from: [250, 95], to: [250, 140], color: '#7ddf7d', delay_ms: 2700 },
+        { type: 'arrow', from: [405, 95], to: [405, 140], color: '#ffe066', delay_ms: 3000 },
+      ];
+      send(cmds);
+    };
+
+    window.demoScience = () => {
+      const cmds = [
+        { type: 'write', content: 'Water Cycle', x: 180, y: 20, font_size: 32, delay_ms: 0 },
+        { type: 'write', content: '☀️ Evaporation', x: 280, y: 60, font_size: 22, delay_ms: 500 },
+        { type: 'write', content: '☁️ Condensation', x: 280, y: 200, font_size: 22, delay_ms: 1000 },
+        { type: 'write', content: '🌧️ Precipitation', x: 100, y: 350, font_size: 22, delay_ms: 1500 },
+        { type: 'write', content: '🌊 Collection', x: 100, y: 450, font_size: 22, delay_ms: 2000 },
+        { type: 'arrow', from: [380, 100], to: [380, 200], color: '#7ec8e3', delay_ms: 2500 },
+        { type: 'arrow', from: [380, 240], to: [200, 350], color: '#7ec8e3', delay_ms: 3000 },
+        { type: 'arrow', from: [200, 400], to: [200, 470], color: '#7ec8e3', delay_ms: 3500 },
+        { type: 'arrow', from: [200, 480], to: [380, 100], color: '#7ec8e3', delay_ms: 4000 },
+        { type: 'circle', cx: 380, cy: 240, r: 50, color: 'white', delay_ms: 4200 },
+        { type: 'highlight', target_text: '☀️ Evaporation', color: 'yellow', delay_ms: 4500 },
+        { type: 'highlight', target_text: '☁️ Condensation', color: 'yellow', delay_ms: 5000 },
+        { type: 'clear', delay_ms: 8000 },
+        { type: 'write', content: 'Great job!', x: 200, y: 250, font_size: 48, delay_ms: 500 },
+        { type: 'write', content: 'You understand the water cycle!', x: 100, y: 320, font_size: 24, delay_ms: 1500 },
+      ];
+      send(cmds);
+    };
+
+    window.clearBoard = () => {
+      send([{ type: 'clear', delay_ms: 0 }]);
+    };
+  </script>
+</body>
+</html>
