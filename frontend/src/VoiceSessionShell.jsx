@@ -32,6 +32,7 @@ function normalize(cmd) {
 
 export default function VoiceSessionShell({ childId }) {
   // ── Core state ───────────────────────────────────────────────────
+  const [sessionStarted, setSessionStarted] = useState(false);
   const [voiceState, setVoiceState] = useState("idle");
   const [connected, setConnected] = useState(false);
   const [micActive, setMicActive] = useState(false);
@@ -141,6 +142,7 @@ export default function VoiceSessionShell({ childId }) {
   }, [childId]);
 
   useEffect(() => {
+    if (!sessionStarted) return;
     mountedRef.current = true;
     connect();
     return () => {
@@ -149,7 +151,7 @@ export default function VoiceSessionShell({ childId }) {
       _stopAudio();
       wsRef.current?.close();
     };
-  }, [connect]);
+  }, [connect, sessionStarted]);
 
   // ── Audio pipeline ───────────────────────────────────────────────
   async function _startAudio(ws) {
@@ -424,7 +426,101 @@ export default function VoiceSessionShell({ childId }) {
     setShowTranscript,
   };
 
-  // ── Render ────────────────────────────────────────────────────────
+  // ── Welcome / CTA screen ──────────────────────────────────────────
+  if (!sessionStarted) {
+    return (
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          background: BG_COLOR,
+          gap: 32,
+          padding: 32,
+        }}
+      >
+        {/* Nova branding */}
+        <div
+          style={{
+            width: 96,
+            height: 96,
+            borderRadius: "50%",
+            background: "linear-gradient(135deg, #a78bfa, #7ddf7d)",
+            boxShadow: "0 0 60px rgba(167, 139, 250, 0.3)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 40,
+          }}
+        >
+          ✦
+        </div>
+
+        <div style={{ textAlign: "center", maxWidth: 360 }}>
+          <h1
+            style={{
+              fontSize: 28,
+              fontWeight: 700,
+              color: "#f0f0e8",
+              margin: 0,
+              letterSpacing: "-0.02em",
+            }}
+          >
+            Nova
+          </h1>
+          <p
+            style={{
+              fontSize: 14,
+              color: "#888",
+              lineHeight: 1.5,
+              marginTop: 8,
+            }}
+          >
+            Your AI tutor for Math, Science, English, and Social Studies.
+            <br />
+            Speak or type — I will guide you step by step.
+          </p>
+        </div>
+
+        <button
+          onClick={() => setSessionStarted(true)}
+          style={{
+            padding: "14px 40px",
+            borderRadius: 12,
+            border: "none",
+            background: "linear-gradient(135deg, #7c3aed, #a78bfa)",
+            color: "#fff",
+            fontSize: 16,
+            fontWeight: 600,
+            cursor: "pointer",
+            letterSpacing: "0.02em",
+            transition: "transform 0.15s, box-shadow 0.15s",
+            boxShadow: "0 4px 24px rgba(124, 58, 237, 0.35)",
+          }}
+          onMouseEnter={(e) => {
+            e.target.style.transform = "scale(1.04)";
+            e.target.style.boxShadow = "0 6px 32px rgba(124, 58, 237, 0.5)";
+          }}
+          onMouseLeave={(e) => {
+            e.target.style.transform = "scale(1)";
+            e.target.style.boxShadow = "0 4px 24px rgba(124, 58, 237, 0.35)";
+          }}
+        >
+          Start Conversation
+        </button>
+
+        <div style={{ fontSize: 11, color: "#555", textAlign: "center" }}>
+          <div>Subjects: Math · Science · English · Social Studies</div>
+          <div style={{ marginTop: 4 }}>CBSE · Class 3 – 10</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Session UI ────────────────────────────────────────────────────
   return (
     <VoiceSessionContext.Provider value={ctxValue}>
       <div
