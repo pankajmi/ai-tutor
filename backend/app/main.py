@@ -66,7 +66,31 @@ async def _repo():
 # --------------------------------------------------------------------------- #
 
 
-from fastapi import Depends, HTTPException
+from fastapi import Body, Depends, HTTPException
+
+
+@app.get("/api/children/{child_id}")
+async def get_child(
+    child_id: str,
+    repo: MemoryRepository = Depends(_repo),
+):
+    """Check if a child profile exists."""
+    child = await repo.get_child(child_id)
+    if child is None:
+        raise HTTPException(status_code=404, detail="Child not found")
+    return {"id": child.id, "name": child.name, "grade": child.grade}
+
+
+@app.post("/api/children")
+async def create_child(
+    child_id: str = Body(...),
+    name: str = Body(...),
+    grade: int = Body(...),
+    repo: MemoryRepository = Depends(_repo),
+):
+    """Create a new child profile."""
+    child = await repo.create_child(child_id, name, grade)
+    return {"id": child.id, "name": child.name, "grade": child.grade}
 
 
 @app.get("/api/children/{child_id}/sessions")

@@ -46,6 +46,18 @@ class MemoryRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def create_child(self, child_id: str, name: str, grade: int) -> Child:
+        """
+        Create a new child profile. If the child already exists, return existing.
+        """
+        existing = await self.get_child(child_id)
+        if existing:
+            return existing
+        child = Child(id=child_id, name=name, grade=grade)
+        self.session.add(child)
+        await self.session.commit()
+        return child
+
     # ---------------------------------------------------------------- #
     # Weak topics
     # ---------------------------------------------------------------- #
