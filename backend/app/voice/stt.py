@@ -47,11 +47,13 @@ class VADConfig:
     speech_threshold: float = 0.65
 
     # How many consecutive ms of silence after speech before we consider
-    # the utterance finished. Children naturally pause 1-2 seconds to
-    # think mid-sentence; setting this too short causes the tutor to
-    # barge in with a partial utterance. 1500ms gives enough room for
-    # thinking pauses without feeling sluggish on actual end-of-speech.
-    end_of_speech_silence_ms: int = 1500
+    # the utterance finished. 700ms is the practical sweet spot: short
+    # enough to feel responsive (~0.7s from stopped talking to Nova
+    # starting to reply), long enough to survive brief mid-sentence
+    # thinking pauses typical in children. If a child regularly gets
+    # cut off mid-thought, raise to 900ms. Do not go back to 1500ms —
+    # that added ~800ms of dead silence before every Whisper call.
+    end_of_speech_silence_ms: int = 700
 
     # Minimum utterance duration to bother transcribing. Filters out coughs,
     # taps, "um" stubs, and other sub-0.5s noise blips.
@@ -70,10 +72,12 @@ class VADConfig:
 class STTConfig:
     """Whisper.cpp model configuration."""
 
-    model_name: str = "medium.en"
-    # whispercpp uses Metal acceleration automatically on Apple Silicon when
-    # built with the appropriate backend; no explicit device flag is needed
-    # for the high-level Python binding, but we keep this for clarity/future use.
+    # small.en is ~2x faster than medium.en on M2 (400-700ms vs 800-1500ms
+    # per utterance) with only ~5% WER increase on clean English speech.
+    # For short conversational utterances from children, the accuracy
+    # difference is imperceptible in practice. If transcription quality
+    # becomes a concern on longer/harder utterances, step up to medium.en.
+    model_name: str = "small.en"
     use_gpu: bool = True
     language: str = "en"
     # Number of threads for any CPU-side work whisper.cpp still performs.

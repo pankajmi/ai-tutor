@@ -136,7 +136,7 @@ class WebSocketSessionManager:
             on_user_speech=self._handle_voice_transcription,
             voice_input=voice_input,
             voice_output=voice_output,
-            config=VoiceLoopConfig(end_of_speech_silence_ms=1500),
+            config=VoiceLoopConfig(end_of_speech_silence_ms=700),
         )
         await self._voice_loop.start()
         logger.info("Voice pipeline initialised for child_id=%s", self.child_id)

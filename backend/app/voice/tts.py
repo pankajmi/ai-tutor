@@ -292,7 +292,16 @@ class VoiceOutputManager:
         self._playback_thread.start()
 
     def _is_stream_active(self) -> bool:
-        return self._stream is not None and self._stream.active
+        # When using a non-SoundDevice sink (e.g. WebSocketSink), there is no
+        # local stream to poll. Fall back to checking whether the playback
+        # thread is alive. Without this fix, speak() returned early while audio
+        # was still transmitting to the browser, causing STT to un-pause before
+        # Nova had finished speaking, breaking barge-in gating.
+        if hasattr(self, "_stream") and self._stream is not None:
+            return self._stream.active
+        if self._playback_thread is not None and self._playback_thread.is_alive():
+            return not self._stop_requested.is_set()
+        return False
 
     def _playback_loop(self) -> None:
         """

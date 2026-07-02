@@ -45,12 +45,27 @@ class WebSocketSink(AudioSink):
         self._audio_queue.put(audio)
 
     async def stop(self) -> None:
-        """Flush pending audio (interrupted utterance)."""
+        """
+        Flush pending audio on barge-in / interruption.
+
+        Also sends a {"type": "stop_audio"} JSON control frame to the browser
+        so AudioPlayer can immediately clear its local queue and stop the
+        currently-playing BufferSource. Without this, audio already transmitted
+        to the browser keeps playing for up to ~1s after the server has stopped
+        generating — making barge-in feel delayed from the child's perspective
+        even though the server responded instantly.
+        """
         while True:
             try:
                 self._audio_queue.get_nowait()
             except queue.Empty:
                 break
+        # Fire-and-forget: send the stop signal without blocking the barge-in
+        # path. Use ensure_future so this doesn't stall voice_loop.stop().
+        try:
+            asyncio.ensure_future(self._ws.send_json({"type": "stop_audio"}))
+        except Exception:
+            pass  # WebSocket may already be closing; not fatal
 
     async def close(self) -> None:
         """Permanent shutdown."""

@@ -115,6 +115,16 @@ export default function VoiceSessionShell({ childId }) {
               setVoiceState("speaking");
             }
           }
+          // Barge-in: server stopped TTS generation because child spoke.
+          // Immediately silence any audio already in the browser's queue
+          // so the child doesn't hear Nova continue speaking for another
+          // ~0.5-1s after their interruption.
+          if (msg.type === "stop_audio") {
+            if (playerRef.current) {
+              playerRef.current.stopNow();
+            }
+            setVoiceState("listening");
+          }
         } catch {
           // ignore malformed
         }

@@ -42,6 +42,35 @@ export class AudioPlayer {
     this.log("started, sampleRate:", this.audioContext.sampleRate);
   }
 
+  /**
+   * Immediately silence playback on barge-in.
+   *
+   * Called when server sends {"type": "stop_audio"} — child interrupted Nova.
+   * Audio already transmitted to the browser keeps playing unless we act here.
+   * Ramps gain to 0 over 30ms (avoids a click/pop), clears the queue, then
+   * restores gain so the next response plays at full volume.
+   * Does NOT close AudioContext — we need it again when Nova replies.
+   */
+  stopNow() {
+    this.log("stopNow() — barge-in signal from server");
+    this.queue = [];
+    this.playing = false;
+    if (this.gainNode && this.audioContext) {
+      const t = this.audioContext.currentTime;
+      this.gainNode.gain.cancelScheduledValues(t);
+      this.gainNode.gain.setValueAtTime(this.gainNode.gain.value, t);
+      this.gainNode.gain.linearRampToValueAtTime(0, t + 0.03);
+      setTimeout(() => {
+        if (this.gainNode && this.audioContext) {
+          const t2 = this.audioContext.currentTime;
+          this.gainNode.gain.cancelScheduledValues(t2);
+          this.gainNode.gain.setValueAtTime(0, t2);
+          this.gainNode.gain.linearRampToValueAtTime(1.0, t2 + 0.05);
+        }
+      }, 60);
+    }
+  }
+
   stop() {
     this.log("stopping, chunksReceived:", this.chunksReceived, "totalSamples:", this.totalSamples);
     this.running = false;

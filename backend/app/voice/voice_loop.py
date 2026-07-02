@@ -75,9 +75,9 @@ class VoiceLoopConfig:
 
     # ── VAD (speech boundary detection) settings ────────────────────
     # Controls how long of a silence gap is needed before the utterance
-    # is considered finished. Raise for longer thinking pauses, lower for
-    # snappier responses.
-    end_of_speech_silence_ms: int = 1500
+    # is considered finished. Kept in sync with VADConfig default (700ms).
+    # Raise to 900ms if children are being cut off mid-thought.
+    end_of_speech_silence_ms: int = 700
 
     def _to_vad_config(self) -> VADConfig:
         return VADConfig(end_of_speech_silence_ms=self.end_of_speech_silence_ms)
