@@ -29,6 +29,14 @@ fi
 echo "==> Syncing Python dependencies via uv..."
 uv sync
 
+echo "==> Installing frontend dependencies..."
+if [ -f frontend/package.json ]; then
+    (cd frontend && npm install)
+    echo "    Frontend dependencies installed."
+else
+    echo "    frontend/package.json not found, skipping."
+fi
+
 echo "==> Checking for Ollama..."
 if ! command -v ollama &> /dev/null; then
     echo "    Ollama not found. Install from https://ollama.com before running the app."

@@ -10,8 +10,26 @@ export default defineConfig({
       "/ws": {
         target: "ws://localhost:8000",
         ws: true,
+        configure: (proxy) => {
+          proxy.on("error", (err) => {
+            const code = err?.code ?? err?.cause?.code ?? "";
+            if (code === "ECONNRESET" || code === "ECONNREFUSED") return;
+            if (err.message?.includes("ECONNREFUSED") || err.message?.includes("ECONNRESET")) return;
+            console.error("ws proxy error:", err);
+          });
+        },
       },
-      "/api": "http://localhost:8000",
+      "/api": {
+        target: "http://localhost:8000",
+        configure: (proxy) => {
+          proxy.on("error", (err) => {
+            const code = err?.code ?? err?.cause?.code ?? "";
+            if (code === "ECONNRESET" || code === "ECONNREFUSED") return;
+            if (err.message?.includes("ECONNREFUSED") || err.message?.includes("ECONNRESET")) return;
+            console.error("api proxy error:", err);
+          });
+        },
+      },
     },
   },
 });

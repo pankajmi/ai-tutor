@@ -111,10 +111,14 @@ sleep 3
 # ── [4/4] Frontend (Vite dev server) ──────────────────────────────────────
 echo "==> [4/4] Starting React frontend on :5173..."
 if [ -f frontend/package.json ]; then
+    if [ ! -d frontend/node_modules ]; then
+        echo "    Installing frontend dependencies..."
+        (cd frontend && npm install)
+    fi
     (cd frontend && npm run dev) &
     FRONTEND_PID=$!
 else
-    echo "    frontend/package.json not found — skipping (run: cd frontend && npm install)"
+    echo "    frontend/package.json not found — skipping."
 fi
 
 echo ""
